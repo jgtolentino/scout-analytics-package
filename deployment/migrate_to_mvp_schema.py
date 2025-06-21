@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Scout Analytics - Azure SQL Database Migration Script
-Migrates SQLite data to Azure SQL Database
+Scout Analytics - Migrate to MVP Schema in Azure SQL Database
+Specialized script for migrating data to the 'mvp' schema
 """
 
 import argparse
@@ -12,21 +12,24 @@ import os
 from pathlib import Path
 from datetime import datetime
 
-def create_azure_tables(cursor, schema='dbo'):
-    """Create tables in Azure SQL Database if they don't exist"""
+def create_mvp_schema_tables(cursor):
+    """Create tables in the mvp schema"""
     
-    # Create schema if it doesn't exist
-    cursor.execute(f"""
-    IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = '{schema}')
+    print("📋 Creating MVP schema and tables...")
+    
+    # Create schema
+    cursor.execute("""
+    IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'mvp')
     BEGIN
-        EXEC('CREATE SCHEMA {schema}')
+        EXEC('CREATE SCHEMA mvp')
     END
     """)
     
-    # Stores table
-    cursor.execute(f"""
-    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('{schema}') AND name = 'stores')
-    CREATE TABLE {schema}.stores (
+    # Create all tables with mvp schema prefix
+    tables_sql = """
+    -- Stores table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'stores')
+    CREATE TABLE mvp.stores (
         store_id INT PRIMARY KEY,
         store_name NVARCHAR(255),
         barangay NVARCHAR(255),
@@ -36,96 +39,89 @@ def create_azure_tables(cursor, schema='dbo'):
         latitude FLOAT,
         longitude FLOAT,
         store_type NVARCHAR(50)
-    )
-    """)
-    
-    # Customers table
-    cursor.execute(f"""
-    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('{schema}') AND name = 'customers')
-    CREATE TABLE {schema}.customers (
+    );
+
+    -- Customers table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'customers')
+    CREATE TABLE mvp.customers (
         customer_id INT PRIMARY KEY,
         age INT,
         gender NVARCHAR(10),
         income_level NVARCHAR(50)
-    )
-    """)
-    
-    # Brands table
-    cursor.execute("""
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='brands' AND xtype='U')
-    CREATE TABLE brands (
+    );
+
+    -- Brands table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'brands')
+    CREATE TABLE mvp.brands (
         brand_id INT PRIMARY KEY,
         brand_name NVARCHAR(255),
         category NVARCHAR(255)
-    )
-    """)
-    
-    # Products table
-    cursor.execute("""
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='products' AND xtype='U')
-    CREATE TABLE products (
+    );
+
+    -- Products table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'products')
+    CREATE TABLE mvp.products (
         product_id INT PRIMARY KEY,
         product_name NVARCHAR(255),
         brand_id INT,
         category NVARCHAR(255),
         unit_price DECIMAL(10,2),
-        FOREIGN KEY (brand_id) REFERENCES brands(brand_id)
-    )
-    """)
-    
-    # Transactions table
-    cursor.execute("""
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='transactions' AND xtype='U')
-    CREATE TABLE transactions (
+        FOREIGN KEY (brand_id) REFERENCES mvp.brands(brand_id)
+    );
+
+    -- Transactions table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'transactions')
+    CREATE TABLE mvp.transactions (
         transaction_id INT PRIMARY KEY,
         store_id INT,
         customer_id INT,
         transaction_datetime DATETIME,
         total_amount DECIMAL(10,2),
-        FOREIGN KEY (store_id) REFERENCES stores(store_id),
-        FOREIGN KEY (customer_id) REFERENCES customers(customer_id)
-    )
-    """)
-    
-    # Transaction items table
-    cursor.execute("""
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='transaction_items' AND xtype='U')
-    CREATE TABLE transaction_items (
+        FOREIGN KEY (store_id) REFERENCES mvp.stores(store_id),
+        FOREIGN KEY (customer_id) REFERENCES mvp.customers(customer_id)
+    );
+
+    -- Transaction items table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'transaction_items')
+    CREATE TABLE mvp.transaction_items (
         item_id INT IDENTITY(1,1) PRIMARY KEY,
         transaction_id INT,
         product_id INT,
         quantity INT,
         unit_price DECIMAL(10,2),
         discount DECIMAL(10,2),
-        FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id),
-        FOREIGN KEY (product_id) REFERENCES products(product_id)
-    )
-    """)
-    
-    # Substitutions table
-    cursor.execute("""
-    IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='substitutions' AND xtype='U')
-    CREATE TABLE substitutions (
+        FOREIGN KEY (transaction_id) REFERENCES mvp.transactions(transaction_id),
+        FOREIGN KEY (product_id) REFERENCES mvp.products(product_id)
+    );
+
+    -- Substitutions table
+    IF NOT EXISTS (SELECT * FROM sys.tables WHERE schema_id = SCHEMA_ID('mvp') AND name = 'substitutions')
+    CREATE TABLE mvp.substitutions (
         substitution_id INT IDENTITY(1,1) PRIMARY KEY,
         transaction_id INT,
         original_product_id INT,
         substituted_product_id INT,
         reason NVARCHAR(255),
-        FOREIGN KEY (transaction_id) REFERENCES transactions(transaction_id),
-        FOREIGN KEY (original_product_id) REFERENCES products(product_id),
-        FOREIGN KEY (substituted_product_id) REFERENCES products(product_id)
-    )
-    """)
+        FOREIGN KEY (transaction_id) REFERENCES mvp.transactions(transaction_id),
+        FOREIGN KEY (original_product_id) REFERENCES mvp.products(product_id),
+        FOREIGN KEY (substituted_product_id) REFERENCES mvp.products(product_id)
+    );
+    """
     
-    print("✅ Tables created successfully")
+    # Execute each statement separately
+    for statement in tables_sql.split(';'):
+        if statement.strip():
+            cursor.execute(statement)
+    
+    print("✅ MVP schema and tables created successfully")
 
-def clear_existing_data(azure_conn):
-    """Clear existing data from tables (preserve structure)"""
+def clear_mvp_data(azure_conn):
+    """Clear existing data from mvp schema tables"""
     cursor = azure_conn.cursor()
     
     # Clear data in reverse dependency order
-    tables = ['substitutions', 'transaction_items', 'transactions', 
-              'customers', 'products', 'brands', 'stores']
+    tables = ['mvp.substitutions', 'mvp.transaction_items', 'mvp.transactions', 
+              'mvp.customers', 'mvp.products', 'mvp.brands', 'mvp.stores']
     
     for table in tables:
         try:
@@ -135,13 +131,12 @@ def clear_existing_data(azure_conn):
             print(f"⚠️  Could not clear table {table}: {e}")
     
     azure_conn.commit()
-    print("✅ Cleared all existing data")
+    print("✅ Cleared all existing data from MVP schema")
 
-def migrate_table_data(sqlite_conn, azure_conn, table_name, batch_size=1000):
-    """Migrate data from SQLite to Azure SQL for a specific table"""
-    print(f"📊 Migrating {table_name}...")
+def migrate_table_to_mvp(sqlite_conn, azure_conn, table_name, batch_size=1000):
+    """Migrate data from SQLite to Azure SQL mvp schema"""
+    print(f"📊 Migrating {table_name} to mvp.{table_name}...")
     
-    # Get data from SQLite
     sqlite_cursor = sqlite_conn.cursor()
     sqlite_cursor.execute(f"SELECT * FROM {table_name}")
     
@@ -152,24 +147,36 @@ def migrate_table_data(sqlite_conn, azure_conn, table_name, batch_size=1000):
     
     azure_cursor = azure_conn.cursor()
     
-    # Process in batches
+    # Handle identity columns for transaction_items and substitutions
+    if table_name in ['transaction_items', 'substitutions']:
+        # Remove item_id/substitution_id from insert
+        if 'item_id' in columns:
+            columns.remove('item_id')
+        if 'substitution_id' in columns:
+            columns.remove('substitution_id')
+        column_names = ', '.join(columns)
+        placeholders = ', '.join(['?' for _ in columns])
+    
     total_rows = 0
     while True:
         rows = sqlite_cursor.fetchmany(batch_size)
         if not rows:
             break
-            
-        # Insert batch into Azure SQL
-        insert_sql = f"INSERT INTO {table_name} ({column_names}) VALUES ({placeholders})"
+        
+        # Remove identity column values if present
+        if table_name in ['transaction_items', 'substitutions']:
+            rows = [row[1:] for row in rows]  # Skip first column (identity)
+        
+        insert_sql = f"INSERT INTO mvp.{table_name} ({column_names}) VALUES ({placeholders})"
+        
         try:
             azure_cursor.executemany(insert_sql, rows)
             azure_conn.commit()
-            
             total_rows += len(rows)
-            print(f"  ✅ Migrated {total_rows} rows to {table_name}")
+            print(f"  ✅ Migrated {total_rows} rows to mvp.{table_name}")
         except Exception as e:
             print(f"  ❌ Error inserting batch: {e}")
-            # Try individual inserts for this batch
+            # Try individual inserts
             for row in rows:
                 try:
                     azure_cursor.execute(insert_sql, row)
@@ -178,11 +185,14 @@ def migrate_table_data(sqlite_conn, azure_conn, table_name, batch_size=1000):
                 except Exception as row_error:
                     print(f"  ⚠️  Skipped row due to error: {row_error}")
     
-    print(f"✅ Completed migration of {table_name}: {total_rows} total rows")
+    print(f"✅ Completed migration of mvp.{table_name}: {total_rows} total rows")
     return total_rows
 
-def migrate_data(sqlite_path, azure_conn_str):
-    """Migrate data from SQLite to Azure SQL"""
+def migrate_to_mvp_schema(sqlite_path, azure_conn_str):
+    """Main migration function for MVP schema"""
+    
+    print("🚀 Starting Scout Analytics data migration to MVP schema")
+    print("=" * 60)
     
     # Connect to SQLite
     print("📊 Connecting to SQLite database...")
@@ -194,14 +204,13 @@ def migrate_data(sqlite_path, azure_conn_str):
     azure_cursor = azure_conn.cursor()
     
     try:
-        # Create tables
-        print("📋 Creating tables in Azure SQL...")
-        create_azure_tables(azure_cursor)
+        # Create MVP schema and tables
+        create_mvp_schema_tables(azure_cursor)
         azure_conn.commit()
         
         # Clear existing data
-        print("🧹 Clearing existing data...")
-        clear_existing_data(azure_conn)
+        print("\n🧹 Clearing existing data...")
+        clear_mvp_data(azure_conn)
         
         # Migration order (respecting foreign key constraints)
         migration_order = [
@@ -214,9 +223,10 @@ def migrate_data(sqlite_path, azure_conn_str):
             'substitutions'
         ]
         
+        print("\n📤 Starting data migration...")
         total_migrated = 0
         for table in migration_order:
-            rows_migrated = migrate_table_data(sqlite_conn, azure_conn, table)
+            rows_migrated = migrate_table_to_mvp(sqlite_conn, azure_conn, table)
             total_migrated += rows_migrated
         
         print(f"\n🎉 Migration completed successfully!")
@@ -225,20 +235,19 @@ def migrate_data(sqlite_path, azure_conn_str):
         
         # Verify migration
         print("\n📋 Verification:")
-        azure_cursor = azure_conn.cursor()
         for table in migration_order:
-            count = azure_cursor.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            print(f"  {table}: {count:,} rows")
+            count = azure_cursor.execute(f"SELECT COUNT(*) FROM mvp.{table}").fetchone()[0]
+            print(f"  mvp.{table}: {count:,} rows")
         
     except Exception as e:
-        print(f"❌ Migration failed: {e}")
+        print(f"\n❌ Migration failed: {e}")
         raise
     finally:
         sqlite_conn.close()
         azure_conn.close()
 
 def main():
-    parser = argparse.ArgumentParser(description='Migrate SQLite data to Azure SQL Database')
+    parser = argparse.ArgumentParser(description='Migrate SQLite data to Azure SQL MVP schema')
     parser.add_argument('--server', required=True, help='Azure SQL server name')
     parser.add_argument('--database', required=True, help='Database name')
     parser.add_argument('--username', required=True, help='Username')
@@ -268,11 +277,10 @@ def main():
     
     # Run migration
     try:
-        migrate_data(sqlite_path, conn_str)
+        migrate_to_mvp_schema(sqlite_path, conn_str)
     except Exception as e:
         print(f"❌ Migration failed: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
     main()
-

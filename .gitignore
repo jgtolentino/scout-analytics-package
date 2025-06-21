@@ -79,3 +79,8 @@ htmlcov/
 # Deployment
 deployment/data/*.csv
 !deployment/data/.gitkeep
+
+# Azure configuration
+.azure-config
+.azure-env
+deployment-info.json

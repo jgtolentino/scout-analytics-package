@@ -1,0 +1,398 @@
+trigger:
+- main
+
+variables:
+  # Azure Resource Configuration - UPDATE THESE WITH YOUR VALUES
+  appName: scout-analytics-api        # Your existing Azure Web App name
+  resourceGroup: scout-analytics-rg   # Your existing resource group
+  storageAccount: scoutanalyticsweb   # Your existing storage account for frontend
+  
+  # Database Configuration
+  sqlServerName: scout-sql-server     # Your existing SQL server
+  sqlDatabaseName: scout_analytics    # Your existing database
+  sqlSchemaName: mvp
+  
+  # Build Configuration
+  csvDir: deployment/data
+  dbPath: backend/scout-analytics-api-flask/src/database/scout_analytics.db
+  apiBase: https://$(appName).azurewebsites.net/api
+  pythonVersion: '3.11'
+  nodeVersion: '18.x'
+  
+  # Service Connection - CREATE THIS IN AZURE DEVOPS
+  azureSubscription: 'scout-analytics-sc'
+
+pool:
+  vmImage: ubuntu-latest
+
+stages:
+# ===== STAGE 1: Build and Prepare =====
+- stage: Build
+  displayName: 'Build Application'
+  jobs:
+  - job: BuildJob
+    displayName: 'Build Backend and Frontend'
+    steps:
+    # Checkout code
+    - checkout: self
+      displayName: 'Checkout repository'
+
+    # Setup Python
+    - task: UsePythonVersion@0
+      inputs:
+        versionSpec: $(pythonVersion)
+      displayName: 'Install Python $(pythonVersion)'
+
+    # Generate sample data and create SQLite database
+    - script: |
+        cd deployment
+        python -m pip install --upgrade pip
+        pip install pandas numpy
+        
+        # Generate sample data if not exists
+        if [ ! -f "data/transactions.csv" ]; then
+          echo "Generating sample data..."
+          python generate_supporting_data.py
+        fi
+        
+        # Load data to SQLite
+        python load_to_sqlite.py
+        
+        # Copy database to API directory
+        mkdir -p ../backend/scout-analytics-api-flask/src/database
+        cp scout_analytics.db ../backend/scout-analytics-api-flask/src/database/
+      displayName: 'Generate data and create SQLite database'
+
+    # Install backend dependencies
+    - script: |
+        cd backend/scout-analytics-api-flask
+        pip install -r requirements.txt
+      displayName: 'Install backend dependencies'
+
+    # Setup Node.js
+    - task: NodeTool@0
+      inputs:
+        versionSpec: $(nodeVersion)
+      displayName: 'Install Node.js $(nodeVersion)'
+
+    # Build frontend
+    - script: |
+        cd frontend/scout-analytics-dashboard
+        npm ci
+        echo "VITE_API_BASE_URL=$(apiBase)" > .env.production
+        npm run build
+      displayName: 'Build React frontend'
+
+    # Create startup script for Azure
+    - script: |
+        cat > backend/scout-analytics-api-flask/startup.sh << 'EOF'
+        #!/bin/bash
+        
+        # Azure App Service startup script for Scout Analytics API
+        
+        # Set environment variables
+        export FLASK_APP=src/main.py
+        export FLASK_ENV=production
+        export DATABASE_SCHEMA=mvp
+        
+        # Navigate to the app directory
+        cd /home/site/wwwroot
+        
+        # Install dependencies if needed (Azure persists these)
+        if [ ! -d "env" ]; then
+            python -m venv env
+            source env/bin/activate
+            pip install -r requirements.txt
+        else
+            source env/bin/activate
+        fi
+        
+        # Start the Flask application with Gunicorn
+        gunicorn --bind 0.0.0.0:8000 --workers 4 --timeout 600 src.main:app
+        EOF
+        
+        chmod +x backend/scout-analytics-api-flask/startup.sh
+      displayName: 'Create startup script'
+
+    # Package backend for deployment
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'backend/scout-analytics-api-flask'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/backend-$(Build.BuildId).zip'
+      displayName: 'Package backend API'
+
+    # Package frontend for deployment
+    - task: ArchiveFiles@2
+      inputs:
+        rootFolderOrFile: 'frontend/scout-analytics-dashboard/dist'
+        includeRootFolder: false
+        archiveType: 'zip'
+        archiveFile: '$(Build.ArtifactStagingDirectory)/frontend-$(Build.BuildId).zip'
+      displayName: 'Package frontend'
+
+    # Publish artifacts
+    - publish: '$(Build.ArtifactStagingDirectory)'
+      artifact: drop
+      displayName: 'Publish build artifacts'
+
+# ===== STAGE 2: Deploy Database Schema =====
+- stage: DeployDatabase
+  displayName: 'Setup Database'
+  dependsOn: Build
+  jobs:
+  - job: DatabaseJob
+    displayName: 'Create MVP Schema'
+    steps:
+    - task: AzureCLI@2
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Create MVP schema
+          cat > create-schema.sql << 'EOF'
+          IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = 'mvp')
+          BEGIN
+              EXEC('CREATE SCHEMA mvp')
+          END
+          GO
+          
+          -- Grant permissions
+          GRANT CREATE TABLE TO [$(sqlUsername)]
+          GRANT ALTER ON SCHEMA::mvp TO [$(sqlUsername)]
+          GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::mvp TO [$(sqlUsername)]
+          GO
+          EOF
+          
+          # Execute schema creation
+          sqlcmd -S $(sqlServerName).database.windows.net \
+                 -d $(sqlDatabaseName) \
+                 -U $(sqlUsername) \
+                 -P "$(sqlPassword)" \
+                 -i create-schema.sql \
+                 -o schema-output.log
+          
+          cat schema-output.log
+      displayName: 'Create MVP schema in SQL Database'
+
+# ===== STAGE 3: Deploy Backend =====
+- stage: DeployBackend
+  displayName: 'Deploy Backend API'
+  dependsOn: DeployDatabase
+  jobs:
+  - deployment: DeployBackendJob
+    displayName: 'Deploy to App Service'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Download artifacts
+          - download: current
+            artifact: drop
+            displayName: 'Download artifacts'
+
+          # Deploy to Azure Web App
+          - task: AzureWebApp@1
+            displayName: 'Deploy API to App Service'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appType: 'webAppLinux'
+              appName: $(appName)
+              package: '$(Pipeline.Workspace)/drop/backend-$(Build.BuildId).zip'
+              runtimeStack: 'PYTHON|3.11'
+              startUpCommand: 'bash startup.sh'
+
+          # Configure app settings
+          - task: AzureAppServiceSettings@1
+            displayName: 'Configure API settings'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              appName: $(appName)
+              resourceGroupName: $(resourceGroup)
+              appSettings: |
+                [
+                  {
+                    "name": "DATABASE_URL",
+                    "value": "mssql+pyodbc://$(sqlUsername):$(sqlPassword)@$(sqlServerName).database.windows.net:1433/$(sqlDatabaseName)?driver=ODBC+Driver+17+for+SQL+Server",
+                    "slotSetting": false
+                  },
+                  {
+                    "name": "DATABASE_SCHEMA",
+                    "value": "mvp",
+                    "slotSetting": false
+                  },
+                  {
+                    "name": "FLASK_ENV",
+                    "value": "production",
+                    "slotSetting": false
+                  },
+                  {
+                    "name": "CORS_ORIGINS",
+                    "value": "https://$(storageAccount).z13.web.core.windows.net",
+                    "slotSetting": false
+                  },
+                  {
+                    "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+                    "value": "true",
+                    "slotSetting": false
+                  }
+                ]
+
+# ===== STAGE 4: Deploy Frontend =====
+- stage: DeployFrontend
+  displayName: 'Deploy Frontend'
+  dependsOn: DeployBackend
+  jobs:
+  - deployment: DeployFrontendJob
+    displayName: 'Deploy to Static Web'
+    environment: 'production'
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          # Download artifacts
+          - download: current
+            artifact: drop
+            displayName: 'Download artifacts'
+
+          # Extract frontend files
+          - task: ExtractFiles@1
+            inputs:
+              archiveFilePatterns: '$(Pipeline.Workspace)/drop/frontend-$(Build.BuildId).zip'
+              destinationFolder: '$(Pipeline.Workspace)/frontend-dist'
+            displayName: 'Extract frontend files'
+
+          # Deploy to Azure Storage
+          - task: AzureCLI@2
+            displayName: 'Deploy frontend to Storage'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Enable static website if not already
+                az storage blob service-properties update \
+                  --account-name $(storageAccount) \
+                  --static-website \
+                  --index-document index.html \
+                  --404-document index.html
+                
+                # Clear existing content
+                az storage blob delete-batch \
+                  --account-name $(storageAccount) \
+                  --source '$web'
+                
+                # Upload new content
+                az storage blob upload-batch \
+                  --account-name $(storageAccount) \
+                  --source '$(Pipeline.Workspace)/frontend-dist' \
+                  --destination '$web' \
+                  --overwrite
+                
+                # Get the website URL
+                WEBSITE_URL=$(az storage account show \
+                  --name $(storageAccount) \
+                  --resource-group $(resourceGroup) \
+                  --query "primaryEndpoints.web" \
+                  --output tsv)
+                
+                echo "Frontend deployed to: $WEBSITE_URL"
+                echo "##vso[task.setvariable variable=frontendUrl;isOutput=true]$WEBSITE_URL"
+
+          # Setup CORS on backend
+          - task: AzureCLI@2
+            displayName: 'Configure CORS'
+            inputs:
+              azureSubscription: $(azureSubscription)
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Get frontend URL
+                FRONTEND_URL=$(az storage account show \
+                  --name $(storageAccount) \
+                  --resource-group $(resourceGroup) \
+                  --query "primaryEndpoints.web" \
+                  --output tsv)
+                
+                # Remove trailing slash
+                FRONTEND_URL=${FRONTEND_URL%/}
+                
+                # Add CORS rule
+                az webapp cors add \
+                  --resource-group $(resourceGroup) \
+                  --name $(appName) \
+                  --allowed-origins "$FRONTEND_URL"
+
+# ===== STAGE 5: Verify Deployment =====
+- stage: Verify
+  displayName: 'Verify Deployment'
+  dependsOn: 
+  - DeployBackend
+  - DeployFrontend
+  jobs:
+  - job: VerifyJob
+    displayName: 'Run smoke tests'
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Test endpoints'
+      inputs:
+        azureSubscription: $(azureSubscription)
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Test backend API
+          echo "Testing backend API..."
+          BACKEND_URL="https://$(appName).azurewebsites.net"
+          
+          # Health check
+          echo "Checking $BACKEND_URL/api/health"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/api/health" || echo "000")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ API health check passed"
+          else
+            echo "❌ API health check failed with status: $HTTP_STATUS"
+            echo "Waiting 30 seconds and retrying..."
+            sleep 30
+            
+            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$BACKEND_URL/api/health" || echo "000")
+            if [ "$HTTP_STATUS" != "200" ]; then
+              echo "❌ API still not responding after retry"
+              exit 1
+            fi
+          fi
+          
+          # Test data endpoints
+          echo "Testing data endpoints..."
+          curl -f "$BACKEND_URL/api/analytics/overview" || echo "Overview endpoint failed"
+          curl -f "$BACKEND_URL/api/analytics/transactions?limit=5" || echo "Transactions endpoint failed"
+          
+          # Test frontend
+          FRONTEND_URL=$(az storage account show \
+            --name $(storageAccount) \
+            --resource-group $(resourceGroup) \
+            --query "primaryEndpoints.web" \
+            --output tsv)
+          
+          echo "Testing frontend at $FRONTEND_URL"
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$FRONTEND_URL")
+          
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Frontend is accessible"
+          else
+            echo "❌ Frontend returned status: $HTTP_STATUS"
+          fi
+          
+          echo ""
+          echo "🎉 Deployment Summary"
+          echo "===================="
+          echo "Backend API: $BACKEND_URL"
+          echo "Frontend: $FRONTEND_URL"
+          echo ""
+          echo "Next steps:"
+          echo "1. Visit $FRONTEND_URL to see the dashboard"
+          echo "2. Check browser console for any errors"
+          echo "3. Verify data is loading correctly"
