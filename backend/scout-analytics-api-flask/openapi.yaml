@@ -1,0 +1,977 @@
+openapi: 3.0.3
+info:
+  title: Scout Analytics API
+  description: |
+    Retail Intelligence API for Scout Analytics MVP
+    
+    This API provides comprehensive retail analytics capabilities including:
+    - Transaction analysis and trends
+    - Product mix and category insights
+    - Consumer demographics and behavior
+    - Brand substitution patterns
+    - Store performance metrics
+    
+    Built with Flask and designed for Philippine retail market analysis.
+  version: 3.0.0
+  contact:
+    name: Scout Analytics Team
+    email: support@scout-analytics.com
+  license:
+    name: Proprietary
+    
+servers:
+  - url: https://g8h3ilc786zz.manus.space/api
+    description: Production server
+  - url: http://localhost:8000/api
+    description: Development server
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: System health and database connectivity status
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      service:
+                        type: string
+                        example: "healthy"
+                      database:
+                        type: string
+                        example: "connected"
+                      version:
+                        type: string
+                        example: "3.0"
+                      uptime_seconds:
+                        type: integer
+                        example: 86400
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /analytics/overview:
+    get:
+      summary: Dashboard Overview Analytics
+      description: Dashboard KPIs and summary metrics for overview page
+      operationId: getOverviewAnalytics
+      tags:
+        - Analytics
+      responses:
+        '200':
+          description: Overview analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      total_revenue:
+                        type: number
+                        format: float
+                        example: 2847392.50
+                        description: Total revenue in Philippine Pesos
+                      transaction_count:
+                        type: integer
+                        example: 15000
+                        description: Total number of transactions
+                      avg_order_value:
+                        type: number
+                        format: float
+                        example: 189.83
+                        description: Average order value in Philippine Pesos
+                      customer_count:
+                        type: integer
+                        example: 12750
+                        description: Total unique customers
+                      revenue_trend:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            value:
+                              type: number
+                              format: float
+                        description: 6-month revenue trend data
+                      top_products:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name:
+                              type: string
+                            revenue:
+                              type: number
+                              format: float
+                            rank:
+                              type: integer
+                        description: Top 5 products by revenue
+                      ai_insights:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/AIInsight'
+                        description: AI-generated business insights
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /analytics/transactions:
+    get:
+      summary: Transaction Data
+      description: Transaction data with filtering and pagination
+      operationId: getTransactions
+      tags:
+        - Analytics
+      parameters:
+        - name: limit
+          in: query
+          description: Number of transactions to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          description: Number of transactions to skip
+          required: false
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: date_from
+          in: query
+          description: Start date for filtering (ISO 8601)
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: date_to
+          in: query
+          description: End date for filtering (ISO 8601)
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: region
+          in: query
+          description: Filter by Philippine region
+          required: false
+          schema:
+            type: string
+            enum: [NCR, "Central Luzon", "Central Visayas", CALABARZON, "Northern Mindanao"]
+        - name: category
+          in: query
+          description: Filter by product category
+          required: false
+          schema:
+            type: string
+            enum: [Beverages, "Food & Snacks", "Personal Care", "Household Items", Others]
+      responses:
+        '200':
+          description: Transaction data with pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Transaction'
+                  pagination:
+                    $ref: '#/components/schemas/PaginationMetadata'
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /analytics/trends:
+    get:
+      summary: Transaction Trends Analytics
+      description: Temporal analysis and regional distribution
+      operationId: getTrendsAnalytics
+      tags:
+        - Analytics
+      responses:
+        '200':
+          description: Trends analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      hourly_volume:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            hour:
+                              type: integer
+                              minimum: 0
+                              maximum: 23
+                            transaction_count:
+                              type: integer
+                        description: Transaction volume by hour of day
+                      regional_distribution:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            region:
+                              type: string
+                            count:
+                              type: integer
+                            percentage:
+                              type: number
+                              format: float
+                        description: Transaction distribution by region
+                      peak_hours:
+                        type: object
+                        properties:
+                          morning_peak:
+                            type: object
+                            properties:
+                              hours:
+                                type: string
+                                example: "6-9 AM"
+                              transaction_count:
+                                type: integer
+                                example: 2847
+                          lunch_peak:
+                            type: object
+                            properties:
+                              hours:
+                                type: string
+                                example: "11 AM-2 PM"
+                              transaction_count:
+                                type: integer
+                                example: 3456
+                          evening_peak:
+                            type: object
+                            properties:
+                              hours:
+                                type: string
+                                example: "6-8 PM"
+                              transaction_count:
+                                type: integer
+                                example: 4123
+                      weekly_patterns:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            day:
+                              type: string
+                              enum: [Monday, Tuesday, Wednesday, Thursday, Friday, Saturday, Sunday]
+                            avg_transactions:
+                              type: number
+                              format: float
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /analytics/products:
+    get:
+      summary: Product Mix Analytics
+      description: Product mix and category analysis
+      operationId: getProductAnalytics
+      tags:
+        - Analytics
+      responses:
+        '200':
+          description: Product analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      category_distribution:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            category:
+                              type: string
+                            percentage:
+                              type: number
+                              format: float
+                            revenue:
+                              type: number
+                              format: float
+                        description: Product category distribution
+                      brand_performance:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            brand:
+                              type: string
+                            revenue:
+                              type: number
+                              format: float
+                            rank:
+                              type: integer
+                        description: Brand performance ranking
+                      top_products:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            product:
+                              type: string
+                            revenue:
+                              type: number
+                              format: float
+                            transactions:
+                              type: integer
+                        description: Top performing products
+                      substitution_summary:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            from_brand:
+                              type: string
+                            to_brand:
+                              type: string
+                            count:
+                              type: integer
+                        description: Brand substitution summary
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /analytics/demographics:
+    get:
+      summary: Consumer Demographics Analytics
+      description: Consumer insights and demographic analysis
+      operationId: getDemographicsAnalytics
+      tags:
+        - Analytics
+      responses:
+        '200':
+          description: Demographics analytics data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      age_distribution:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            age_group:
+                              type: string
+                              example: "26-35 years"
+                            percentage:
+                              type: number
+                              format: float
+                              example: 31.2
+                            count:
+                              type: integer
+                              example: 4680
+                        description: Customer age group distribution
+                      regional_preferences:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            region:
+                              type: string
+                            top_categories:
+                              type: array
+                              items:
+                                type: string
+                        description: Regional product preferences
+                      store_performance:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            store:
+                              type: string
+                            metrics:
+                              type: object
+                              properties:
+                                revenue:
+                                  type: number
+                                  format: float
+                                transactions:
+                                  type: integer
+                                avg_order_value:
+                                  type: number
+                                  format: float
+                        description: Store performance metrics
+                      customer_segments:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            segment:
+                              type: string
+                            characteristics:
+                              type: object
+                        description: Customer segmentation analysis
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /substitutions:
+    get:
+      summary: Brand Substitution Data
+      description: Brand substitution patterns and flow analysis
+      operationId: getSubstitutions
+      tags:
+        - Data Access
+      parameters:
+        - name: limit
+          in: query
+          description: Number of substitutions to return
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: brand
+          in: query
+          description: Filter by specific brand
+          required: false
+          schema:
+            type: string
+        - name: category
+          in: query
+          description: Filter by product category
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Substitution data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      substitution_flows:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Substitution'
+                      top_substitutions:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            from:
+                              type: string
+                            to:
+                              type: string
+                            count:
+                              type: integer
+                            reason:
+                              type: string
+                      substitution_reasons:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            reason:
+                              type: string
+                            count:
+                              type: integer
+                            percentage:
+                              type: number
+                              format: float
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /stores:
+    get:
+      summary: Store Data
+      description: Store locations and performance metrics
+      operationId: getStores
+      tags:
+        - Data Access
+      responses:
+        '200':
+          description: Store data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      stores:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Store'
+                      regional_summary:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            region:
+                              type: string
+                            store_count:
+                              type: integer
+                            performance:
+                              type: object
+                              properties:
+                                total_revenue:
+                                  type: number
+                                  format: float
+                                avg_revenue_per_store:
+                                  type: number
+                                  format: float
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /products:
+    get:
+      summary: Product Data
+      description: Product catalog with performance metrics
+      operationId: getProducts
+      tags:
+        - Data Access
+      parameters:
+        - name: category
+          in: query
+          description: Filter by product category
+          required: false
+          schema:
+            type: string
+        - name: brand
+          in: query
+          description: Filter by brand
+          required: false
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Product data
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "success"
+                  data:
+                    type: object
+                    properties:
+                      products:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Product'
+                      category_summary:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            category:
+                              type: string
+                            product_count:
+                              type: integer
+                  metadata:
+                    $ref: '#/components/schemas/ResponseMetadata'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+components:
+  schemas:
+    ResponseMetadata:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO 8601 timestamp of response
+        request_id:
+          type: string
+          description: Unique identifier for request tracking
+        processing_time_ms:
+          type: integer
+          description: Processing time in milliseconds
+      required:
+        - timestamp
+        - request_id
+        - processing_time_ms
+
+    PaginationMetadata:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+        per_page:
+          type: integer
+          description: Items per page
+        total_items:
+          type: integer
+          description: Total number of items
+        total_pages:
+          type: integer
+          description: Total number of pages
+        has_next:
+          type: boolean
+          description: Whether there is a next page
+        has_prev:
+          type: boolean
+          description: Whether there is a previous page
+      required:
+        - page
+        - per_page
+        - total_items
+        - total_pages
+        - has_next
+        - has_prev
+
+    AIInsight:
+      type: object
+      properties:
+        category:
+          type: string
+          enum: [Operations, Marketing, "Customer Insights", Inventory, "Sales Strategy"]
+          description: Insight category
+        message:
+          type: string
+          description: Human-readable insight message
+        confidence:
+          type: number
+          format: float
+          minimum: 0
+          maximum: 100
+          description: Confidence score as percentage
+        actions:
+          type: array
+          items:
+            type: string
+          description: Recommended action items
+      required:
+        - category
+        - message
+        - confidence
+        - actions
+
+    Transaction:
+      type: object
+      properties:
+        transaction_id:
+          type: string
+          format: uuid
+          description: Unique transaction identifier
+        customer_id:
+          type: string
+          format: uuid
+          description: Customer identifier
+        store_id:
+          type: string
+          format: uuid
+          description: Store identifier
+        transaction_date:
+          type: string
+          format: date-time
+          description: Transaction timestamp
+        total_amount:
+          type: number
+          format: float
+          description: Total transaction amount in PHP
+        payment_method:
+          type: string
+          enum: [Cash, Card, GCash, PayMaya, GrabPay]
+          description: Payment method used
+        region:
+          type: string
+          description: Philippine region
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TransactionItem'
+          description: Transaction line items
+      required:
+        - transaction_id
+        - customer_id
+        - store_id
+        - transaction_date
+        - total_amount
+        - payment_method
+        - region
+
+    TransactionItem:
+      type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: Product identifier
+        product_name:
+          type: string
+          description: Product name
+        quantity:
+          type: integer
+          minimum: 1
+          description: Quantity purchased
+        unit_price:
+          type: number
+          format: float
+          description: Unit price in PHP
+        total_price:
+          type: number
+          format: float
+          description: Total line item price in PHP
+      required:
+        - product_id
+        - product_name
+        - quantity
+        - unit_price
+        - total_price
+
+    Substitution:
+      type: object
+      properties:
+        substitution_id:
+          type: string
+          format: uuid
+          description: Unique substitution identifier
+        transaction_id:
+          type: string
+          format: uuid
+          description: Associated transaction
+        original_product_id:
+          type: string
+          format: uuid
+          description: Originally requested product
+        substitute_product_id:
+          type: string
+          format: uuid
+          description: Substituted product
+        reason:
+          type: string
+          enum: ["Out of stock", "Promotion", "Price difference", "Customer preference"]
+          description: Reason for substitution
+        created_at:
+          type: string
+          format: date-time
+          description: Substitution timestamp
+      required:
+        - substitution_id
+        - transaction_id
+        - original_product_id
+        - substitute_product_id
+        - reason
+        - created_at
+
+    Store:
+      type: object
+      properties:
+        store_id:
+          type: string
+          format: uuid
+          description: Unique store identifier
+        store_name:
+          type: string
+          description: Store name
+        location:
+          type: string
+          description: Store location/address
+        region:
+          type: string
+          description: Philippine region
+        metrics:
+          type: object
+          properties:
+            total_revenue:
+              type: number
+              format: float
+              description: Total store revenue in PHP
+            transaction_count:
+              type: integer
+              description: Total transactions
+            avg_order_value:
+              type: number
+              format: float
+              description: Average order value in PHP
+            customer_count:
+              type: integer
+              description: Unique customers served
+      required:
+        - store_id
+        - store_name
+        - location
+        - region
+
+    Product:
+      type: object
+      properties:
+        product_id:
+          type: string
+          format: uuid
+          description: Unique product identifier
+        product_name:
+          type: string
+          description: Product name
+        category:
+          type: string
+          description: Product category
+        brand:
+          type: string
+          description: Product brand
+        unit_price:
+          type: number
+          format: float
+          description: Unit price in PHP
+        metrics:
+          type: object
+          properties:
+            total_revenue:
+              type: number
+              format: float
+              description: Total product revenue in PHP
+            units_sold:
+              type: integer
+              description: Total units sold
+            transaction_count:
+              type: integer
+              description: Number of transactions containing this product
+      required:
+        - product_id
+        - product_name
+        - category
+        - brand
+        - unit_price
+
+    Error:
+      type: object
+      properties:
+        status:
+          type: string
+          example: "error"
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+              description: Error code
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: string
+              description: Additional error context
+          required:
+            - code
+            - message
+        metadata:
+          $ref: '#/components/schemas/ResponseMetadata'
+      required:
+        - status
+        - error
+        - metadata
+
+  responses:
+    BadRequest:
+      description: Bad request - invalid parameters
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: "error"
+            error:
+              code: "INVALID_PARAMETER"
+              message: "Invalid date format provided"
+              details: "Date must be in ISO 8601 format (YYYY-MM-DD)"
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            status: "error"
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"
+              details: "Please try again later or contact support"
+
+tags:
+  - name: System
+    description: System health and monitoring endpoints
+  - name: Analytics
+    description: Business intelligence and analytics endpoints
+  - name: Data Access
+    description: Raw data access endpoints for detailed analysis
+

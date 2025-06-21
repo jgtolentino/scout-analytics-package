@@ -1,0 +1,87 @@
+[
+  {
+    "name": "NODE_ENV",
+    "value": "production"
+  },
+  {
+    "name": "DEBUG",
+    "value": "false"
+  },
+  {
+    "name": "LOG_LEVEL",
+    "value": "info"
+  },
+  {
+    "name": "FLASK_ENV",
+    "value": "production"
+  },
+  {
+    "name": "FLASK_DEBUG",
+    "value": "false"
+  },
+  {
+    "name": "CORS_ORIGINS",
+    "value": "https://ewlwkasq.manus.space"
+  },
+  {
+    "name": "WEBSITES_ENABLE_APP_SERVICE_STORAGE",
+    "value": "false"
+  },
+  {
+    "name": "WEBSITES_PORT",
+    "value": "8000"
+  },
+  {
+    "name": "SCM_DO_BUILD_DURING_DEPLOYMENT",
+    "value": "true"
+  },
+  {
+    "name": "GUNICORN_WORKERS",
+    "value": "4"
+  },
+  {
+    "name": "GUNICORN_WORKER_CLASS",
+    "value": "uvicorn.workers.UvicornWorker"
+  },
+  {
+    "name": "GUNICORN_BIND",
+    "value": "0.0.0.0:8000"
+  },
+  {
+    "name": "GUNICORN_TIMEOUT",
+    "value": "30"
+  },
+  {
+    "name": "CACHE_TYPE",
+    "value": "simple"
+  },
+  {
+    "name": "CACHE_DEFAULT_TIMEOUT",
+    "value": "300"
+  },
+  {
+    "name": "RATE_LIMIT_PER_HOUR",
+    "value": "1000"
+  },
+  {
+    "name": "ENABLE_RETAIL_BOT",
+    "value": "true"
+  },
+  {
+    "name": "ENABLE_REAL_TIME_ANALYTICS",
+    "value": "true"
+  },
+  {
+    "name": "DEFAULT_CURRENCY",
+    "value": "PHP"
+  },
+  {
+    "name": "DEFAULT_TIMEZONE",
+    "value": "Asia/Manila"
+  },
+  {
+    "name": "DEFAULT_LANGUAGE",
+    "value": "en-PH"
+  }
+]
+
