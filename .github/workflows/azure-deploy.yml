@@ -1,0 +1,116 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_WEBAPP_NAME: scout-analytics-api
+  AZURE_WEBAPP_PACKAGE_PATH: 'backend/scout-analytics-api-flask'
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18.x'
+
+jobs:
+  build-and-deploy-backend:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+    
+    - name: Create and activate virtual environment
+      run: |
+        python -m venv venv
+        source venv/bin/activate
+      working-directory: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+      working-directory: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        package: ${{ env.AZURE_WEBAPP_PACKAGE_PATH }}
+
+  build-and-deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: build-and-deploy-backend
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+        cache: 'npm'
+        cache-dependency-path: frontend/scout-analytics-dashboard/package-lock.json
+    
+    - name: Install dependencies
+      run: npm ci
+      working-directory: frontend/scout-analytics-dashboard
+    
+    - name: Build frontend
+      run: |
+        echo "VITE_API_BASE_URL=${{ secrets.API_BASE_URL }}" > .env.production
+        npm run build
+      working-directory: frontend/scout-analytics-dashboard
+    
+    - name: Login to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+    
+    - name: Upload to blob storage
+      uses: azure/CLI@v1
+      with:
+        inlineScript: |
+          az storage blob upload-batch \
+            --account-name ${{ secrets.STORAGE_ACCOUNT_NAME }} \
+            --auth-mode key \
+            --source frontend/scout-analytics-dashboard/dist \
+            --destination '$web' \
+            --overwrite
+
+  verify-deployment:
+    runs-on: ubuntu-latest
+    needs: [build-and-deploy-backend, build-and-deploy-frontend]
+    
+    steps:
+    - name: Health check backend
+      run: |
+        for i in {1..5}; do
+          HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.API_BASE_URL }}/health)
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "Backend is healthy"
+            exit 0
+          fi
+          echo "Attempt $i failed, waiting 30 seconds..."
+          sleep 30
+        done
+        echo "Backend health check failed"
+        exit 1
+    
+    - name: Verify frontend
+      run: |
+        HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" ${{ secrets.FRONTEND_URL }})
+        if [ "$HTTP_STATUS" = "200" ]; then
+          echo "Frontend is accessible"
+        else
+          echo "Frontend verification failed"
+          exit 1
+        fi
